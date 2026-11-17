@@ -5,6 +5,7 @@ Scans files for AI-generated content patterns and converts them to natural Engli
 """
 
 import os
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -27,12 +28,7 @@ class GitHubRepoCleaner:
     }
     
     # File extensions to process
-    PROCESSABLE_EXTENSIONS = {
-        '.py', '.md', '.txt', '.yml', '.yaml', '.json', 
-        '.sh', '.bash', '.js', '.ts', '.jsx', '.tsx',
-        '.html', '.css', '.java', '.cpp', '.c', '.go',
-        '.rb', '.php', '.swift', '.kt', '.rs'
-    }
+    PROCESSABLE_EXTENSIONS = {'.md', '.txt'}
     
     # Folders to skip
     SKIP_FOLDERS = {
@@ -57,6 +53,10 @@ class GitHubRepoCleaner:
         
     def scan_and_clean(self) -> Dict:
         """Scan repo and clean files."""
+        source = self.repo_path.resolve()
+        output = self.output_path.resolve()
+        if source == output or source in output.parents:
+            raise ValueError('Choose an output directory outside the source repository.')
         if not self.repo_path.exists():
             print(f"❌ Repository path not found: {self.repo_path}")
             return {}
@@ -83,6 +83,8 @@ class GitHubRepoCleaner:
     def _process_directory(self, source_dir: Path, dest_dir: Path):
         """Recursively process directory."""
         for item in source_dir.iterdir():
+            if item.is_symlink():
+                continue
             # Skip certain directories
             if item.is_dir():
                 if item.name in self.SKIP_FOLDERS or item.name.startswith('.'):
@@ -114,7 +116,11 @@ class GitHubRepoCleaner:
             issues = self._detect_ai_patterns(content)
             
             # Clean content
-            cleaned_content = self._clean_content(content, issues)
+            sections = re.split(r'(```[\s\S]*?```|~~~[\s\S]*?~~~)', content)
+            cleaned_content = '\n'.join(
+                section if section.startswith(('```', '~~~')) else self._clean_content(section, issues)
+                for section in sections
+            )
             
             # Write cleaned file
             output_file = output_dir / file_path.name
@@ -239,21 +245,16 @@ class GitHubRepoCleaner:
 
 
 def main():
-    """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python github_cleaner.py <repo_path> [output_path]")
-        print("\nExample:")
-        print("  python github_cleaner.py ./my-cybersecurity-repo")
-        print("  python github_cleaner.py ./my-repo ./cleaned-repo")
-        sys.exit(1)
-    
-    repo_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else None
-    
-    cleaner = GitHubRepoCleaner(repo_path, output_path)
-    result = cleaner.scan_and_clean()
-    
-    return result
+    parser = argparse.ArgumentParser(description="Simplify repeated wording in Markdown and text files.")
+    parser.add_argument("repo_path")
+    parser.add_argument("output_path", nargs="?")
+    args = parser.parse_args()
+    if not Path(args.repo_path).is_dir():
+        parser.error("repository path must be an existing directory")
+    try:
+        return GitHubRepoCleaner(args.repo_path, args.output_path).scan_and_clean()
+    except ValueError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":
